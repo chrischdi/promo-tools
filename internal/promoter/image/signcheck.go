@@ -42,6 +42,7 @@ import (
 	"sigs.k8s.io/promo-tools/v4/image/consts"
 	checkresults "sigs.k8s.io/promo-tools/v4/promoter/image/checkresults"
 	options "sigs.k8s.io/promo-tools/v4/promoter/image/options"
+	"sigs.k8s.io/promo-tools/v4/promoter/image/ratelimit"
 	"sigs.k8s.io/promo-tools/v4/types/image"
 )
 
@@ -131,13 +132,20 @@ func (di *DefaultPromoterImplementation) GetSignatureStatus(
 		"Checking %d images for signatures, each in %d mirrors",
 		len(images), len(mirrors),
 	)
+
+	craneOpts := []crane.Option{
+		crane.WithAuthFromKeychain(gcrane.Keychain),
+		crane.WithUserAgent(image.UserAgent),
+		crane.WithTransport(ratelimit.Limiter),
+	}
+
 	for _, refString := range images {
 		ref, err := name.ParseReference(refString)
 		if err != nil {
 			return results, fmt.Errorf("parsing reference: %w", err)
 		}
 
-		digest, err := crane.Digest(refString)
+		digest, err := crane.Digest(refString, craneOpts...)
 		if err != nil {
 			return results, fmt.Errorf("getting digest for %s: %w", refString, err)
 		}
@@ -198,8 +206,14 @@ func (di *DefaultPromoterImplementation) CheckSignatureLayers(opts *options.Opti
 }
 
 func objectExists(opts *options.Options, refString string) (bool, error) {
+	craneOpts := []crane.Option{
+		crane.WithAuthFromKeychain(gcrane.Keychain),
+		crane.WithUserAgent(image.UserAgent),
+		crane.WithTransport(ratelimit.Limiter),
+	}
+
 	// Check
-	manifestData, err := crane.Manifest(refString)
+	manifestData, err := crane.Manifest(refString, craneOpts...)
 	if err != nil {
 		if strings.Contains(err.Error(), "MANIFEST_UNKNOWN") {
 			logrus.WithField("image", refString).Info("No signature found")
@@ -305,6 +319,7 @@ func (di *DefaultPromoterImplementation) replicateReference(opts *options.Option
 	craneOpts := []crane.Option{
 		crane.WithAuthFromKeychain(gcrane.Keychain),
 		crane.WithUserAgent(image.UserAgent),
+		crane.WithTransport(ratelimit.Limiter),
 	}
 
 	if !opts.SignCheckFix {
